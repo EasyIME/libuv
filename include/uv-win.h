@@ -472,6 +472,10 @@ RB_HEAD(uv_timer_tree_s, uv_timer_s);
 #define UV_PIPE_PRIVATE_FIELDS                                                \
   HANDLE handle;                                                              \
   WCHAR* name;                                                                \
+  /* PIME: these fields are added for the PIME project to create Windows */   \
+  /* named pipes with special security attributes*/                           \
+  DWORD pipe_mode;                                                            \
+  SECURITY_ATTRIBUTES* security_attributes;                                   \
   union {                                                                     \
     struct { uv_pipe_server_fields } serv;                                    \
     struct { uv_pipe_connection_fields } conn;                                \

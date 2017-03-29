@@ -89,12 +89,15 @@ static void uv_unique_pipe_name(char* ptr, char* name, size_t size) {
 }
 
 
-int uv_pipe_init(uv_loop_t* loop, uv_pipe_t* handle, int ipc) {
+int uv_pipe_init_windows_named_pipe(uv_loop_t* loop, uv_pipe_t* handle, int ipc, DWORD pipe_mode, SECURITY_ATTRIBUTES* sa) {
   uv_stream_init(loop, (uv_stream_t*)handle, UV_NAMED_PIPE);
 
   handle->reqs_pending = 0;
   handle->handle = INVALID_HANDLE_VALUE;
   handle->name = NULL;
+  /* PIME: this filed is added for PIME so we can create named pipes with special security attributes */
+  handle->pipe_mode = pipe_mode;
+  handle->security_attributes = sa;
   handle->pipe.conn.ipc_pid = 0;
   handle->pipe.conn.remaining_ipc_rawdata_bytes = 0;
   QUEUE_INIT(&handle->pipe.conn.pending_ipc_info.queue);
@@ -106,6 +109,11 @@ int uv_pipe_init(uv_loop_t* loop, uv_pipe_t* handle, int ipc) {
   UV_REQ_INIT(&handle->pipe.conn.ipc_header_write_req, UV_UNKNOWN_REQ);
 
   return 0;
+}
+
+
+int uv_pipe_init(uv_loop_t* loop, uv_pipe_t* handle, int ipc) {
+	return uv_pipe_init_windows_named_pipe(loop, handle, ipc, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE, NULL);
 }
 
 
@@ -203,8 +211,8 @@ int uv_stdio_pipe_server(uv_loop_t* loop, uv_pipe_t* handle, DWORD access,
 
     pipeHandle = CreateNamedPipeA(name,
       access | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
-      PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 65536, 65536, 0,
-      NULL);
+      handle->pipe_mode | PIPE_WAIT, 1, 65536, 65536, 0,
+      handle->security_attributes);
 
     if (pipeHandle != INVALID_HANDLE_VALUE) {
       /* No name collisions.  We're done. */
@@ -536,7 +544,7 @@ int uv_pipe_bind(uv_pipe_t* handle, const char* name) {
       PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
       FILE_FLAG_FIRST_PIPE_INSTANCE,
       PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-      PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, NULL);
+      PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, handle->security_attributes);
 
   if (handle->pipe.serv.accept_reqs[0].pipeHandle == INVALID_HANDLE_VALUE) {
     err = GetLastError();
@@ -804,7 +812,7 @@ static void uv_pipe_queue_accept(uv_loop_t* loop, uv_pipe_t* handle,
 
     req->pipeHandle = CreateNamedPipeW(handle->name,
         PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        handle->pipe_mode | PIPE_WAIT,
         PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, NULL);
 
     if (req->pipeHandle == INVALID_HANDLE_VALUE) {
@@ -1541,7 +1549,7 @@ void uv__pipe_insert_pending_socket(uv_pipe_t* handle,
 
 void uv_process_pipe_read_req(uv_loop_t* loop, uv_pipe_t* handle,
     uv_req_t* req) {
-  DWORD bytes, avail;
+  DWORD bytes, avail, avail_msg;
   uv_buf_t buf;
   uv_ipc_frame_uv_stream ipc_frame;
 
@@ -1566,7 +1574,7 @@ void uv_process_pipe_read_req(uv_loop_t* loop, uv_pipe_t* handle,
                           0,
                           NULL,
                           &avail,
-                          NULL)) {
+                          &avail_msg)) {
         uv_pipe_read_error_or_eof(loop, handle, GetLastError(), uv_null_buf_);
         break;
       }
@@ -1629,6 +1637,11 @@ void uv_process_pipe_read_req(uv_loop_t* loop, uv_pipe_t* handle,
           avail = min(avail, (DWORD)handle->pipe.conn.remaining_ipc_rawdata_bytes);
         }
       }
+
+	  /* special handling for message mode pipes */
+	  if (handle->pipe_mode & PIPE_READMODE_MESSAGE) {
+		  avail = avail_msg;  /* only read until the end of the current message */
+	  }
 
       buf = uv_buf_init(NULL, 0);
       handle->alloc_cb((uv_handle_t*) handle, avail, &buf);

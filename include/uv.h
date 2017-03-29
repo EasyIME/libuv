@@ -693,6 +693,12 @@ struct uv_pipe_s {
 };
 
 UV_EXTERN int uv_pipe_init(uv_loop_t*, uv_pipe_t* handle, int ipc);
+
+#if defined(_WIN32)
+/* PIME: add a Windows only version to create named pipes with proper security attributes */
+UV_EXTERN int uv_pipe_init_windows_named_pipe(uv_loop_t* loop, uv_pipe_t* handle, int ipc, DWORD pipe_mode, SECURITY_ATTRIBUTES* sa);
+#endif  /* WIN32 */
+
 UV_EXTERN int uv_pipe_open(uv_pipe_t*, uv_file file);
 UV_EXTERN int uv_pipe_bind(uv_pipe_t* handle, const char* name);
 UV_EXTERN void uv_pipe_connect(uv_connect_t* req,
