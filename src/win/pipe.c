@@ -258,7 +258,7 @@ static int uv_set_pipe_handle(uv_loop_t* loop,
   NTSTATUS nt_status;
   IO_STATUS_BLOCK io_status;
   FILE_MODE_INFORMATION mode_info;
-  DWORD mode = PIPE_READMODE_BYTE | PIPE_WAIT;
+  DWORD mode = (handle->pipe_mode & (PIPE_READMODE_BYTE|PIPE_READMODE_MESSAGE)) | PIPE_WAIT;
   DWORD current_mode = 0;
   DWORD err = 0;
 
@@ -541,9 +541,9 @@ int uv_pipe_bind(uv_pipe_t* handle, const char* name) {
    * If this fails then there's already a pipe server for the given pipe name.
    */
   handle->pipe.serv.accept_reqs[0].pipeHandle = CreateNamedPipeW(handle->name,
-      PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
-      FILE_FLAG_FIRST_PIPE_INSTANCE,
-      PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+      PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED/* |
+      FILE_FLAG_FIRST_PIPE_INSTANCE*/,
+      handle->pipe_mode | PIPE_WAIT,
       PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, handle->security_attributes);
 
   if (handle->pipe.serv.accept_reqs[0].pipeHandle == INVALID_HANDLE_VALUE) {
@@ -1558,7 +1558,8 @@ void uv_process_pipe_read_req(uv_loop_t* loop, uv_pipe_t* handle,
   handle->flags &= ~UV_HANDLE_READ_PENDING;
   eof_timer_stop(handle);
 
-  if (!REQ_SUCCESS(req)) {
+  /* for messate type pipes, ERROR_MORE_DATA is normal if there are still data left for the current message */
+  if (!REQ_SUCCESS(req) && GET_REQ_ERROR(req) != ERROR_MORE_DATA) {
     /* An error occurred doing the 0-read. */
     if (handle->flags & UV_HANDLE_READING) {
       uv_pipe_read_error_or_eof(loop,
